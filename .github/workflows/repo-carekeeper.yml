@@ -1,0 +1,89 @@
+name: Krypto GitHub Caretaker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 7 * * 1'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz kod projektu
+        uses: actions/checkout@v4
+
+      - name: Sprawdź pliki projektu
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const required = [
+              'README.md',
+              'package.json',
+              'server.js'
+            ];
+
+            const missing = required.filter(
+              file => !fs.existsSync(file)
+            );
+
+            let details = missing.length
+              ? 'Brak wymaganych plików:\n' +
+                missing.map(f => '- ' + f).join('\n')
+              : 'Podstawowe pliki projektu są obecne.';
+
+            if (fs.existsSync('package.json')) {
+              try {
+                JSON.parse(fs.readFileSync('package.json', 'utf8'));
+                details += '\npackage.json: poprawny JSON.';
+              } catch (e) {
+                details += '\nBŁĄD package.json: ' + e.message;
+              }
+            }
+
+            const title =
+              'Repo caretaker: kontrola projektu Krypto';
+
+            const body =
+              '## Automatyczny raport Krypto\n\n' +
+              details +
+              '\n\nData kontroli: ' +
+              new Date().toISOString() +
+              '\n\nBot tylko sprawdza pliki. ' +
+              'Nie zmienia kodu i nie składa zleceń.';
+
+            const { data: issues } =
+              await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                per_page: 100
+              });
+
+            const existing = issues.find(
+              i => !i.pull_request && i.title === title
+            );
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body
+              });
+            }
+
+            if (missing.length) {
+              core.setFailed(details);
+            }
